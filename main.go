@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
+	"text/template"
 	"time"
 
 	"os"
@@ -203,17 +205,28 @@ func sendEmailWithSES(subject string, rich string, text string, emailAddress str
 	return result, nil
 }
 
-
 func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
-	// Build the email
-	header := "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional //EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\"xmlns:o=\"urn:schemas-microsoft-com:office:office\" style=\"line-height: inherit;\"><head><!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]--><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><!--[if !mso]><!--><meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\"><!--<![endif]--><style type=\"text/css\">body, td {font-size: 17px;font-weight: 400;line-height: 28px;max-width: 30em;font-family:\"Inter\", \"Avenir Next\", \"Open Sans\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\";}img {max-width: 350px;margin: 0 auto;}a {text-size-adjust: 100%;text-decoration-line: none;text-decoration-style: initial;text-decoration-color: initial;font-weight: 600 !important;color: #56876D}code {font-size: 16px;font-family: monospace;}</style></head><body><table align=\"center\" style=\"text-size-adjust:100%;border-collapse:collapse !important;\"><tbody><tr><td align=\"center\" valign=\"top\" style=\"text-size-adjust:100%;\"><table style=\"text-size-adjust:100%;max-width:600px;text-align:left;border-collapse:collapse !important;\"><tbody><tr><td style=\"text-size-adjust:100%;padding-top:0px;padding-right:18px;padding-bottom:14px;padding-left:18px;\">"
-	ender := "</td></tr></tbody></table></td></tr></tbody></table></body></html>"
+	var htmlBody bytes.Buffer
+	templateData := struct {
+		Title       string
+		Description string
+		Content     string
+	}{
+		Title:       event.Title,
+		Description: event.Description,
+		Content:     event.Content,
+	}
 
+	// Build the email
 	subject := os.Getenv("TITLE") + ": " + event.Title
-	rich := header + "<h1>" + event.Title + "</h1><p style=\"font-size: 1.2em;\">" + event.Description + "</p>" + event.Content + ender
+
+	t, _ := template.ParseFiles("template.html")
+	t.Execute(&htmlBody, templateData)
+
+	rich := htmlBody.String()
 
 	text := event.Title + "\n\n" + event.Description + "\n\n---\n\nYou can view this email as HTML, or read this on my site: \n" + event.Link + "\n\n---\n\n" + event.Plain
-	
+
 	// Get list of subscribers
 	scanoutput, err := scanForSubscribers(true)
 	if err != nil {
