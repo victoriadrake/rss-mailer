@@ -221,7 +221,10 @@ func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
 	// Build the email
 	subject := os.Getenv("TITLE") + ": " + event.Title
 
-	t, _ := template.ParseFiles("template.html")
+	t, terr := template.ParseFiles("template.html")
+	if terr != nil {
+		log.Fatalf("could not get email template: %s", terr)
+	}
 	t.Execute(&htmlBody, templateData)
 
 	rich := htmlBody.String()
