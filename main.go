@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"text/template"
 	"time"
 
@@ -31,6 +32,11 @@ type Invocation struct {
 type Subscriber struct {
 	Email string
 	Id string
+}
+
+type SendEmailErrors struct {
+	Messages []error
+	sync.Mutex
 }
 
 // Find list items with the given confirmation status
@@ -137,17 +143,36 @@ func updateIdsInDynamoDB(svc *dynamodb.DynamoDB, email string, id string, timest
 	return result, err
 }
 
-func sendEmailWithSES(svc *ses.SES, subject string, rich string, text string, emailAddress string, id string) (*ses.SendEmailOutput, error) {
+func buildEmail(event Invocation, emailAddress string, id string) (*ses.SendEmailInput) {
+	var htmlBody bytes.Buffer
+	templateData := struct {
+		Title       string
+		Description string
+		Content     string
+	}{
+		Title:       event.Title,
+		Description: event.Description,
+		Content:     event.Content,
+	}
+
 	unsubLink := os.Getenv("UNSUBSCRIBE_LINK")
 
-	// HTML format
-	msg := rich + "\n\n<hr>\n\n<p style=\"font-size: 0.9em;\">You're subscribed to <a href=\"" + os.Getenv("WEBSITE") + "\">" + os.Getenv("TITLE") + "</a>. Click here to <a href=\"" + unsubLink + "?email=" + emailAddress + "&id=" + id + "\">unsubscribe</a>.</p></body></html>"
-
-	// Plain text format
-	txt := text + "\n\n---\n\nYou've subscribed at " + os.Getenv("WEBSITE") + ". To unsubscribe, use: " + unsubLink + "?email=" + emailAddress + "&id=" + id
-
+	// Build the rich text email
+	t, terr := template.ParseFiles("template.html")
+	if terr != nil {
+		log.Fatalf("could not get email template: %s", terr)
+	}
+	t.Execute(&htmlBody, templateData)
+	rich := htmlBody.String() + "\n\n<hr>\n\n<p style=\"font-size: 0.9em;\">You're subscribed to <a href=\"" + os.Getenv("WEBSITE") + "\">" + os.Getenv("TITLE") + "</a>. Click here to <a href=\"" + unsubLink + "?email=" + emailAddress + "&id=" + id + "\">unsubscribe</a>.</p>"
+	
+	// Build plain text format
+	plain := event.Title + "\n\n" + event.Description + "\n\n---\n\nYou can view this email as HTML, or read this on my site: \n" + event.Link + "\n\n---\n\n" + event.Plain + "\n\n---\n\nYou've subscribed at " + os.Getenv("WEBSITE") + ". To unsubscribe, use: " + unsubLink + "?email=" + emailAddress + "&id=" + id
+	
 	// Build the "from" value
 	source := fmt.Sprintf("\"%s\" <%s>", os.Getenv("SENDER_NAME"), os.Getenv("SENDER_EMAIL"))
+
+	// Email subject line
+	subject := os.Getenv("TITLE") + ": " + event.Title
 
 	input := &ses.SendEmailInput{
 		Destination: &ses.Destination{
@@ -159,11 +184,11 @@ func sendEmailWithSES(svc *ses.SES, subject string, rich string, text string, em
 			Body: &ses.Body{
 				Html: &ses.Content{
 					Charset: aws.String("UTF-8"),
-					Data:    aws.String(msg),
+					Data:    aws.String(rich),
 				},
 				Text: &ses.Content{
 					Charset: aws.String("UTF-8"),
-					Data:    aws.String(txt),
+					Data:    aws.String(plain),
 				},
 			},
 			Subject: &ses.Content{
@@ -175,9 +200,49 @@ func sendEmailWithSES(svc *ses.SES, subject string, rich string, text string, em
 		Source:     aws.String(source),
 	}
 
-	result, err := svc.SendEmail(input)
+	return input
+}
+
+func sendLotsOfEmails(svc *ses.SES, input *ses.SendEmailInput, errs *SendEmailErrors, wg *sync.WaitGroup) {
+	// Efficiently send emails with goroutine
+	wg.Add(1)
+	defer wg.Done()
+	_, err := svc.SendEmail(input)
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
+		errs.Lock()
+		defer errs.Unlock()
+		errs.Messages = append(errs.Messages, err)
+	}
+}
+	
+	
+func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
+	// Get list of subscribers
+	dynamo_client := dynamodb.New(session.New())
+	scanoutput, err := scanForSubscribers(dynamo_client, true)
+	if err != nil {
+		log.Printf("could not get subscribers: %s", err)
+	}
+	subscribers := []Subscriber{}
+	dynamodbattribute.UnmarshalListOfMaps(scanoutput.Items, &subscribers)
+	
+	// Send each one an email
+	ses_session := ses.New(session.New())
+	sendCount := 0
+	// Reset subscriber ID
+	now := time.Now().Format("2006-01-02 15:04:05")
+	wg := sync.WaitGroup{}
+	heardYouLikeErrors := SendEmailErrors{Messages: make([]error, 0)}
+	for _,sub := range subscribers {
+		input := buildEmail(event, sub.Email, sub.Id)
+		go sendLotsOfEmails(ses_session, input, &heardYouLikeErrors, &wg)
+		newId := uuid.New().String()
+		go updateIdsInDynamoDB(dynamo_client, sub.Email, newId, now, true)
+		sendCount++
+	}
+	wg.Wait() // Wait until all the emails are sent to log errors
+	for _,ses_err := range heardYouLikeErrors.Messages{
+		if aerr, ok := ses_err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case ses.ErrCodeMessageRejected:
 				log.Print(ses.ErrCodeMessageRejected, aerr.Error())
@@ -196,64 +261,6 @@ func sendEmailWithSES(svc *ses.SES, subject string, rich string, text string, em
 			// Print the error, cast err to awserr.Error to get the Code and
 			// Message from an error.
 			log.Print("SES send error:", err.Error())
-		}
-	}
-
-	return result, nil
-}
-
-func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
-	var htmlBody bytes.Buffer
-	templateData := struct {
-		Title       string
-		Description string
-		Content     string
-	}{
-		Title:       event.Title,
-		Description: event.Description,
-		Content:     event.Content,
-	}
-
-	// Build the email
-	subject := os.Getenv("TITLE") + ": " + event.Title
-
-	t, terr := template.ParseFiles("template.html")
-	if terr != nil {
-		log.Fatalf("could not get email template: %s", terr)
-	}
-	t.Execute(&htmlBody, templateData)
-
-	rich := htmlBody.String()
-
-	text := event.Title + "\n\n" + event.Description + "\n\n---\n\nYou can view this email as HTML, or read this on my site: \n" + event.Link + "\n\n---\n\n" + event.Plain
-
-	// Get list of subscribers
-	dynamo_client := dynamodb.New(session.New())
-	scanoutput, err := scanForSubscribers(dynamo_client, true)
-	if err != nil {
-		log.Printf("could not get subscribers: %s", err)
-	}
-	subscribers := []Subscriber{}
-	dynamodbattribute.UnmarshalListOfMaps(scanoutput.Items, &subscribers)
-
-	// Send each one an email
-	ses_session := ses.New(session.New())
-	sendCount := 0
-	for _,sub := range subscribers {
-		_, err := sendEmailWithSES(ses_session, subject, rich, text, sub.Email, sub.Id)
-		if err != nil {
-			log.Printf("could not send email to %s: %s", sub.Email, err)
-		}
-		if err == nil {
-			sendCount ++
-
-			// Reset subscriber ID
-			now := time.Now().Format("2006-01-02 15:04:05")
-			newId := uuid.New().String()
-			_, rerr := updateIdsInDynamoDB(dynamo_client, sub.Email, newId, now, true)
-			if rerr != nil {
-				log.Printf("could not update ID for %s: %s", sub.Email, err)
-			}
 		}
 	}
 
