@@ -34,9 +34,8 @@ type Subscriber struct {
 }
 
 // Find list items with the given confirmation status
-func scanForSubscribers(confirm bool) (*dynamodb.ScanOutput, error) {
+func scanForSubscribers(svc *dynamodb.DynamoDB, confirm bool) (*dynamodb.ScanOutput, error) {
 	table := os.Getenv("DB_TABLE_NAME")
-	svc := dynamodb.New(session.New())
 	input := &dynamodb.ScanInput{
 		ExpressionAttributeNames: map[string]*string{
 			"#C": aws.String("confirm"),
@@ -74,9 +73,8 @@ func scanForSubscribers(confirm bool) (*dynamodb.ScanOutput, error) {
 }
 
 // Update subscriber IDs
-func updateIdsInDynamoDB(email string, id string, timestamp string, confirm bool) (*dynamodb.UpdateItemOutput, error) {
+func updateIdsInDynamoDB(svc *dynamodb.DynamoDB, email string, id string, timestamp string, confirm bool) (*dynamodb.UpdateItemOutput, error) {
 	table := os.Getenv("DB_TABLE_NAME")
-	svc := dynamodb.New(session.New())
 
 	input := &dynamodb.UpdateItemInput{
 		// Provide the key to use for finding the right item.
@@ -139,9 +137,7 @@ func updateIdsInDynamoDB(email string, id string, timestamp string, confirm bool
 	return result, err
 }
 
-func sendEmailWithSES(subject string, rich string, text string, emailAddress string, id string) (*ses.SendEmailOutput, error) {
-	svc := ses.New(session.New())
-
+func sendEmailWithSES(svc *ses.SES, subject string, rich string, text string, emailAddress string, id string) (*ses.SendEmailOutput, error) {
 	unsubLink := os.Getenv("UNSUBSCRIBE_LINK")
 
 	// HTML format
@@ -232,27 +228,29 @@ func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
 	text := event.Title + "\n\n" + event.Description + "\n\n---\n\nYou can view this email as HTML, or read this on my site: \n" + event.Link + "\n\n---\n\n" + event.Plain
 
 	// Get list of subscribers
-	scanoutput, err := scanForSubscribers(true)
+	dynamo_client := dynamodb.New(session.New())
+	scanoutput, err := scanForSubscribers(dynamo_client, true)
 	if err != nil {
 		log.Printf("could not get subscribers: %s", err)
 	}
 	subscribers := []Subscriber{}
 	dynamodbattribute.UnmarshalListOfMaps(scanoutput.Items, &subscribers)
-	
+
 	// Send each one an email
+	ses_session := ses.New(session.New())
 	sendCount := 0
 	for _,sub := range subscribers {
-		_, err := sendEmailWithSES(subject, rich, text, sub.Email, sub.Id)
+		_, err := sendEmailWithSES(ses_session, subject, rich, text, sub.Email, sub.Id)
 		if err != nil {
 			log.Printf("could not send email to %s: %s", sub.Email, err)
 		}
 		if err == nil {
 			sendCount ++
-			
+
 			// Reset subscriber ID
 			now := time.Now().Format("2006-01-02 15:04:05")
 			newId := uuid.New().String()
-			_, rerr := updateIdsInDynamoDB(sub.Email, newId, now, true)
+			_, rerr := updateIdsInDynamoDB(dynamo_client, sub.Email, newId, now, true)
 			if rerr != nil {
 				log.Printf("could not update ID for %s: %s", sub.Email, err)
 			}
