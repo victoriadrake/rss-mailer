@@ -7,7 +7,6 @@ import (
 	"log"
 	"sync"
 	"text/template"
-	"time"
 
 	"os"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/ses"
-	"github.com/google/uuid"
 )
 
 type Invocation struct {
@@ -229,15 +227,11 @@ func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
 	// Send each one an email
 	ses_session := ses.New(session.New())
 	sendCount := 0
-	// Reset subscriber ID
-	now := time.Now().Format("2006-01-02 15:04:05")
 	wg := sync.WaitGroup{}
 	heardYouLikeErrors := SendEmailErrors{Messages: make([]error, 0)}
 	for _,sub := range subscribers {
 		input := buildEmail(event, sub.Email, sub.Id)
 		go sendLotsOfEmails(ses_session, input, &heardYouLikeErrors, &wg)
-		newId := uuid.New().String()
-		go updateIdsInDynamoDB(dynamo_client, sub.Email, newId, now, true)
 		sendCount++
 	}
 	wg.Wait() // Wait until all the emails are sent to log errors
