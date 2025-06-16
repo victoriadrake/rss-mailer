@@ -2,20 +2,21 @@
 
 A Lambda function for turning your RSS feed items into emails.
 
-- [About the Project](#about-the-project)
-- [Getting Started](#getting-started)
-  - [Environment Values](#environment-values)
-  - [Expected Arguments](#expected-arguments)
-- [Dual License](#dual-license)
-- [Contributing](#contributing)
-  - [Open an Issue](#open-an-issue)
-  - [Send a Pull Request](#send-a-pull-request)
+- [📨 RSS Mailer](#-rss-mailer)
+  - [About the Project](#about-the-project)
+  - [Getting Started](#getting-started)
+    - [Environment Values](#environment-values)
+    - [Expected Arguments](#expected-arguments)
+  - [License](#license)
+  - [Contributing](#contributing)
+    - [Open an Issue](#open-an-issue)
+    - [Send a Pull Request](#send-a-pull-request)
 
 ## About the Project
 
 This daughter project of SimpleSubscribe contains code that you upload to an AWS Lambda function. The Lambda receives a trigger event from your RSS feed, and uses this data to send emails to your subscriber list stored in Dynamo DB.
 
-For building your own independent subscriber base, see the [SimpleSubscribe project](https://github.com/victoriadrake/simple-subscribe) and [SimpleSubscribe.org](https://simplesubscribe.org/).
+For building your own independent subscriber base, see the [SimpleSubscribe project](https://github.com/victoriadrake/simple-subscribe).
 
 ## Getting Started
 
@@ -52,11 +53,9 @@ The function's `Invocation` struct shows the arguments expected to be passed in 
 
 If, for example, you're using Zapier to trigger your function, ensure that each of these arguments are provided in the **Invoke Function in AWS Lambda** > **Set up action** step.
 
-## Dual License
+## License
 
-This project is available under the [Mozilla Public License 2.0 (MPL-2.0)](https://www.mozilla.org/en-US/MPL/2.0/) for non-monetized applications, such as building and sending your own free newsletter.
-
-For commercial organizations or monetized applications, a one-time commercial license fee of $49 helps to support maintenance and further development. Commercial or monetized usage is subject to the [End-User License Agreement](LICENSE-EULA). You may purchase a license at the parent project website, [SimpleSubscribe.org](https://simplesubscribe.org/).
+This project is available under the [Mozilla Public License 2.0 (MPL-2.0)](https://www.mozilla.org/en-US/MPL/2.0/).
 
 ## Contributing
 
