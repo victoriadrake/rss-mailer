@@ -153,8 +153,8 @@ func buildEmail(event Invocation, emailAddress string, id string) *ses.SendEmail
 }
 
 func sendLotsOfEmails(svc *ses.Client, input *ses.SendEmailInput, errs *SendEmailErrors, wg *sync.WaitGroup) {
-	// Efficiently send emails with goroutine
-	wg.Add(1)
+	// Efficiently send emails with goroutine. The caller must call wg.Add(1)
+	// before launching this goroutine so wg.Wait() can't race ahead.
 	defer wg.Done()
 	_, err := svc.SendEmail(context.Background(), input)
 	if err != nil {
@@ -189,6 +189,7 @@ func lambdaHandler(ctx context.Context, event Invocation) (string, error) {
 	heardYouLikeErrors := SendEmailErrors{Messages: make([]error, 0)}
 	for _, sub := range subscribers {
 		input := buildEmail(event, sub.Email, sub.Id)
+		wg.Add(1)
 		go sendLotsOfEmails(sesClient, input, &heardYouLikeErrors, &wg)
 		sendCount++
 	}
