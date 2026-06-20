@@ -30,7 +30,7 @@ func TestBuildEmail(t *testing.T) {
 	if got := *input.Message.Subject.Data; got != "My Newsletter: New Post" {
 		t.Errorf("subject = %q, want %q", got, "My Newsletter: New Post")
 	}
-	if got := *input.Destination.ToAddresses[0]; got != "subscriber@example.com" {
+	if got := input.Destination.ToAddresses[0]; got != "subscriber@example.com" {
 		t.Errorf("recipient = %q", got)
 	}
 	if got := *input.Source; !strings.Contains(got, "Victoria") || !strings.Contains(got, "hi@example.com") {
