@@ -38,8 +38,21 @@ type SendEmailErrors struct {
 	sync.Mutex
 }
 
+// DynamoDBAPI is the subset of the DynamoDB client used here, so callers can
+// pass a mock in tests. The concrete *dynamodb.Client satisfies it.
+type DynamoDBAPI interface {
+	Scan(ctx context.Context, params *dynamodb.ScanInput, optFns ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+}
+
+// SESAPI is the subset of the SES client used here. The concrete *ses.Client
+// satisfies it.
+type SESAPI interface {
+	SendEmail(ctx context.Context, params *ses.SendEmailInput, optFns ...func(*ses.Options)) (*ses.SendEmailOutput, error)
+}
+
 // Find list items with the given confirmation status
-func scanForSubscribers(svc *dynamodb.Client, confirm bool) (*dynamodb.ScanOutput, error) {
+func scanForSubscribers(svc DynamoDBAPI, confirm bool) (*dynamodb.ScanOutput, error) {
 	table := os.Getenv("DB_TABLE_NAME")
 	input := &dynamodb.ScanInput{
 		ExpressionAttributeNames: map[string]string{
@@ -61,7 +74,7 @@ func scanForSubscribers(svc *dynamodb.Client, confirm bool) (*dynamodb.ScanOutpu
 }
 
 // Update subscriber IDs
-func updateIdsInDynamoDB(svc *dynamodb.Client, email string, id string, timestamp string, confirm bool) (*dynamodb.UpdateItemOutput, error) {
+func updateIdsInDynamoDB(svc DynamoDBAPI, email string, id string, timestamp string, confirm bool) (*dynamodb.UpdateItemOutput, error) {
 	table := os.Getenv("DB_TABLE_NAME")
 
 	input := &dynamodb.UpdateItemInput{
@@ -152,7 +165,7 @@ func buildEmail(event Invocation, emailAddress string, id string) *ses.SendEmail
 	return input
 }
 
-func sendLotsOfEmails(svc *ses.Client, input *ses.SendEmailInput, errs *SendEmailErrors, wg *sync.WaitGroup) {
+func sendLotsOfEmails(svc SESAPI, input *ses.SendEmailInput, errs *SendEmailErrors, wg *sync.WaitGroup) {
 	// Efficiently send emails with goroutine. The caller must call wg.Add(1)
 	// before launching this goroutine so wg.Wait() can't race ahead.
 	defer wg.Done()
